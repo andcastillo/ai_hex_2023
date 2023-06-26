@@ -1,4 +1,750 @@
-require=(function(){function r(e,n,t){function o(i,f){if(!n[i]){if(!e[i]){var c="function"==typeof require&&require;if(!f&&c)return c(i,!0);if(u)return u(i,!0);var a=new Error("Cannot find module '"+i+"'");throw a.code="MODULE_NOT_FOUND",a}var p=n[i]={exports:{}};e[i][0].call(p.exports,function(r){var n=e[i][1][r];return o(n||r)},p,p.exports,r,e,n,t)}return n[i].exports}for(var u="function"==typeof require&&require,i=0;i<t.length;i++)o(t[i]);return o}return r})()({1:[function(require,module,exports){
+require=(function(){function r(e,n,t){function o(i,f){if(!n[i]){if(!e[i]){var c="function"==typeof require&&require;if(!f&&c)return c(i,!0);if(u)return u(i,!0);var a=new Error("Cannot find module '"+i+"'");throw a.code="MODULE_NOT_FOUND",a}var p=n[i]={exports:{}};e[i][0].call(p.exports,function(r){var n=e[i][1][r];return o(n||r)},p,p.exports,r,e,n,t)}return n[i].exports}for(var u="function"==typeof require&&require,i=0;i<t.length;i++)o(t[i]);return o}return r})()({"/src/HexAgent.js":[function(require,module,exports){
+const Agent = require('ai-agents').Agent;
+//const boardS = require('./boardScore');
+//const transposeHex = require('./transposeHex');
+const Graph = require('node-dijkstra');
+//const transpose = require('./transposeHex');
+const crypto = require('crypto');
+
+function transpose(board) {
+  let size = board.length;
+  let boardT = new Array(size);
+  for (let j = 0; j < size; j++) {
+      boardT[j] = new Array(size);
+      for (let i = 0; i < size; i++) {
+          boardT[j][i] = board[i][j];
+          if (boardT[j][i] === '1') {
+              boardT[j][i] = '2';
+          } else if (boardT[j][i] === '2') {
+              boardT[j][i] = '1';
+          }
+      }
+  }
+  return boardT;
+}
+
+let cache = {};
+
+function copyBoard(board) {
+  return board.map(row => row.slice());
+}
+
+function boardScore(board, player) {
+  
+  let path0 = boardPath(board);
+  let score = 0;
+  if (!path0) {
+    score = -999999999//(board.length * board.length);
+  } else {
+    if (path0.length === 2) {
+      score = 999999999//(board.length * board.length);
+    } else {
+      let path1 = boardPath(transpose(board));
+      if (!path1) {
+        score = 999999999//(board.length * board.length)
+      } else {
+        score = path1.length - path0.length;
+        //console.log(score)
+      }
+    }
+  }
+  score += nearEdge(board,player)
+  score += evaluatePatterns(board,player)
+  
+  //console.log(transpose(board))
+  return player === '1' ? score : -score;
+}
+  
+function nearEdge(board,player) {
+  let score = 0;
+  for (let i = 0; i < board.length; i++) {
+    for (let j = 0; j < board.length; j++) {
+      if(board[i][j] === player){
+        const distanceToEdge = Math.min(i, board.length - 1 - i, j, board.length - 1 - j);
+        score += distanceToEdge;
+      }
+    }
+  }
+  return score
+  
+}
+
+function evaluatePatterns(board,player){
+  let score = 0;
+  //console.log("entre a evaluar los patrones")
+    if (blocksEnemyConnections(board,player)){
+      score += 2;
+    }
+    if (formsTongs(board,player)){
+      score += 1;
+    }
+    if(formsYConnections(board,player)){
+      score += 1;
+    }
+    if(blockMyOwnPaths(board,player)){
+      score -= 2;
+    }
+    if(enemyCanCutMyConnections(board,player)){
+      score -= 1;
+    }
+    // if(createsAdversePatterns(board,player)){
+    //   score -= 100;
+    // }
+    
+    return score
+}
+
+// function enemyIsConnected(row,col,player,board){
+//   let counter = 0
+//   let enemy = player === 1 ? 2 : 1;
+//   for(let i = 0; i < board.length; i++){
+//     if(board[i] == enemy && board[i + 1] == player){
+//       return false
+//     }
+//     if(board[i] == player && board[i + 1] == enemy){
+//       return false
+//     }
+    
+//   }
+//   return true
+// }
+
+
+function blocksEnemyConnections(board,player){
+  const opponent = player === 1 ? 2 : 1;
+  const size = board.length
+    // Verificar filas y columnas
+    let boardCopy = copyBoard(board)
+    let TempBoard = boardCopy
+    if(player === 2){
+      TempBoard = transpose(boardCopy)
+    }
+    let enemyBlock = false
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+          for(let k = 0 ; k < 6; k++){
+            if((i - 1 < 0) || (i + 1 >= size) || (j - 1 < 0) || (j + 1 >= size)){
+              break;
+            }
+            if(TempBoard[i - 1][j] === opponent && TempBoard[i][j - 1] === opponent){
+              return true
+            }
+            if(TempBoard[i][j + 1] === opponent && TempBoard[i + 1][j] === opponent){
+              enemyBlock = true 
+              break;
+            }
+            if(TempBoard[i - 1][j] === opponent && TempBoard[i][j + 1] === opponent){
+              return true
+            }
+            if(TempBoard[i][j - 1] === opponent && TempBoard[i + 1][j] === opponent){
+              return true
+            }
+          }
+          // if (enemyBlock) {
+          //   return [i,j];
+          // }
+          
+        }
+      }
+      return false
+}
+
+
+// Función para verificar si se forma una tenaza
+function formsTongs(board, player) {
+  const size = board.length;
+
+  // Verificar filas
+  for (let i = 0; i < size; i++) {
+    for (let j = 0; j < size - 2; j++) {
+      if (
+        board[i][j] === player &&
+        board[i][j + 1] === player &&
+        board[i][j + 2] === player
+      ) {
+        return true;
+      }
+    }
+  }
+
+  // Verificar columnas
+  for (let i = 0; i < size; i++) {
+    for (let j = 0; j < size - 2; j++) {
+      if (
+        board[j][i] === player &&
+        board[j + 1][i] === player &&
+        board[j + 2][i] === player
+      ) {
+        return true;
+      }
+    }
+  }
+
+  // Verificar diagonales
+  for (let i = 0; i < size - 2; i++) {
+    for (let j = 0; j < size - 2; j++) {
+      if (
+        board[i][j] === player &&
+        board[i + 1][j + 1] === player &&
+        board[i + 2][j + 2] === player
+      ) {
+        return true;
+      }
+      if (
+        board[i][size - 1 - j] === player &&
+        board[i + 1][size - 2 - j] === player &&
+        board[i + 2][size - 3 - j] === player
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function formsTongs(board, player) {
+  const size = board.length;
+  // Verificar filas
+  for (let i = 0; i < size; i++) {
+    for (let j = 0; j < size; j++) {
+      if (board[i][j] === 0) {
+        let key = i * size + j;
+        let list = getNeighborhood(key, player, board);
+        list = removeIfAny(board, list, i, j);
+        for (const neighbor of list) {
+          let row = Math.floor(neighbor/size);
+          let column = neighbor % size;
+          if(row < 0 || column < 0 || row>size || column>size){
+            continue;
+          }else if (board[row][column] !== player) {
+            let neighborNeighbors = getNeighborhood(neighbor,player,board);
+            neighborNeighbors = removeIfAny(board, neighborNeighbors, row, column);
+            for (const neighborNeighbor of neighborNeighbors) {
+              let row1 = Math.floor(neighborNeighbor/size);
+              let column1 = neighborNeighbor % size;
+              if(row1 < 0 || column1 < 0 || row1>size || column1>size){
+                continue;
+              }else if (
+                neighborNeighbor !== key &&
+                board[row1][column1] === player
+              ) {
+                return true;
+              }
+            }
+          } 
+        }  
+      }
+    }
+  }
+  return false;
+}
+
+function hasCommonNeighbors(node1, node2 , i, j,row,column,board) {
+  const neighbors1 = getNeighborhood(node1);
+  neighbors1 = removeIfAny(board,neighbors1,i,j)
+  const neighbors2 = getNeighborhood(node2);
+  neighbors2 = removeIfAny(board,neighbors2,row,column)
+  for (const neighbor of neighbors1) {
+    if (neighbors2.includes(neighbor)) {
+      return true;
+    }
+  }
+  return false
+}
+
+function formsYConnections(board, player) {
+  const size = board.length;
+  for (let i = 0; i < size; i++) {
+    for (let j = 0; j < size; j++) {
+      if (board[i][j] === 0) {
+        let key = i * size + j;
+        let list = getNeighborhood(key, player, board);
+        list = removeIfAny(board, list, i, j);
+        for (const neighbor of list) {
+          let row = Math.floor(neighbor/size);
+          let column = neighbor % size;
+          if(row < 0 || column < 0 || row>size || column>size){
+            continue;
+          }else if (
+            board[row][column] === player &&
+            (row !== i || column !== j) &&
+            hasCommonNeighbors(key,neighbor,i,j,row,column,board)
+          ) {
+            return true
+          }
+        }
+    }
+  }
+  }
+  return false;
+}
+
+function copyBoard(board) {
+  return board.map(row => row.slice());
+}
+
+function enemyCanCutMyConnections(board, player) {
+  const size = board.length;
+  const transposedBoard = transpose(board);
+
+  // Verificar si hay una conexión entre los lados opuestos del tablero
+  const path1 = boardPath(board);
+  const path2 = boardPath(transposedBoard);
+  const playerPath = player === 1 ? '1T' : '2T';
+
+  if (!path1 || !path2) {
+    return false; // No hay conexión entre los lados opuestos
+  }
+
+  if (path1.includes(playerPath) || path2.includes(playerPath)) {
+    return false; // El jugador ya tiene una conexión establecida
+  }
+
+  // Verificar si una jugada corta una conexión existente
+  for (let i = 0; i < size; i++) {
+    for (let j = 0; j < size; j++) {
+      if (board[i][j] === 0) {
+        const newBoard = copyBoard(board);
+        newBoard[i][j] = player;
+
+        const newPath1 = boardPath(newBoard);
+        const newPath2 = boardPath(transpose(newBoard));
+
+        if (!newPath1 || !newPath2) {
+          return true; // La jugada corta una conexión existente
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+
+
+function blockMyOwnPaths(board, player) {
+  const size = board.length;
+  const transposedBoard = transpose(board);
+
+  // Verificar si hay una conexión entre los lados opuestos del tablero
+  const path1 = boardPath(board);
+  const path2 = boardPath(transposedBoard);
+  const playerPath = player === 1 ? '1T' : '2T';
+
+  if (!path1 || !path2) {
+    return false; // No hay conexión entre los lados opuestos
+  }
+
+  if (path1.includes(playerPath) || path2.includes(playerPath)) {
+    return false; // El jugador ya tiene una conexión establecida
+  }
+
+  // Verificar si una jugada bloquea los caminos hacia la conexión entre los lados opuestos
+  for (let i = 0; i < size; i++) {
+    for (let j = 0; j < size; j++) {
+      if (board[i][j] === 0) {
+        const newBoard = copyBoard(board);
+        newBoard[i][j] = player;
+
+        const newPath1 = boardPath(newBoard);
+        const newPath2 = boardPath(transpose(newBoard));
+
+        if (!newPath1 || !newPath2) {
+          return true; // La jugada bloquea los caminos hacia la conexión entre los lados opuestos
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+// function createsAdversePatterns(board, player) {
+//   const size = board.length;
+
+//   // Verificar si una jugada crea patrones adversos
+//   for (let i = 0; i < size; i++) {
+//     for (let j = 0; j < size; j++) {
+//       if (board[i][j] === 0) {
+//         const newBoard = copyBoard(board);
+//         newBoard[i][j] = player;
+
+//         if (blocksEnemyConnections(newBoard, player)) {
+//           return true; // La jugada bloquea las conexiones del oponente
+//         }
+
+//         if (formsTongs(newBoard, player)) {
+//           return true; // La jugada forma patrones de Tongs favorables al oponente
+//         }
+
+//         if (formsYConnections(newBoard, player)) {
+//           return true; // La jugada forma patrones de Y favorables al oponente
+//         }
+//       }
+//     }
+//   }
+
+//   return false;
+// }
+
+
+
+function boardPath(board) {
+  let player = '1';
+  let size = board.length;
+
+  const route = new Graph();
+
+  let neighborsT = {};
+  let neighborsX = {};
+  cache = {};
+  
+
+  for (let i = 0; i < size; i++) {
+    for (let j = 0; j < size; j++) {
+      let key = i * size + j;
+      if (board[i][j] === 0 || board[i][j] === player) {
+        let list = getNeighborhood(key, player, board);
+        // Cache this result
+        //cache[key] = list;
+        list = removeIfAny(board, list, i, j);
+        //if (key === 5) console.log(list)
+        
+        let neighbors = {};
+        let sideX = false;
+        let sideT = false;
+        list.forEach(x => {
+          switch (x) {
+            case -1:
+              neighbors[player + 'X'] = 1;
+              neighborsX[key + ''] = 1;
+              sideX = sideX || board[i][j] === player;
+              break;
+            case -2:
+              neighbors[player + 'T'] = 1;
+              neighborsT[key + ''] = 1;
+              sideT = sideT || board[i][j] === player;
+              break;
+            default:
+              neighbors[x + ''] = 1;
+          }
+        });
+        // This case occurs when the game has finished
+        if (sideT && sideX) {
+          neighborsX[player + 'T'] = 1;
+          neighborsT[player + 'X'] = 1;
+        }
+        route.addNode(key + '', neighbors);
+       
+      }
+    } 
+  }
+  route.addNode(player + 'T', neighborsT);
+  route.addNode(player + 'X', neighborsX);
+  
+  //console.log(route)
+  const shortestPath = route.path(player + 'T', player + 'X');
+  
+  return shortestPath
+}
+
+/**
+ * Evita que se consideren las casillas donde el enemigo tiene 2 opciones para cerrar el camino
+ * @param {*} board 
+ * @param {*} list 
+ * @param {*} row 
+ * @param {*} col 
+ * @returns 
+ */
+function removeIfAny(board, list, row, col) {
+  let size = board.length;
+  if (row > 0 && col > 0 && row < size - 1 && col < size - 1 && list.length > 0) {
+    if (board[row - 1][col] === 0 && board[row - 1][col - 1] === '2' && board[row][col + 1] === '2') {
+      let k = list.findIndex(key => key === (row - 1) * size + col);
+      //console.log('x: ' + k + ' ' + ((row - 1) *  size + col));
+      //console.log(list);
+      if (k >= 0)
+        list.splice(k, 1);
+    }
+    if (board[row][col + 1] === 0 && board[row - 1][col] === '2' && board[row + 1][col + 1] === '2') {
+      let k = list.findIndex(key => key === row * size + col + 1);
+      //console.log('x: ' + k + ' ' + (row *  size + col + 1) );
+      //console.log(list);
+      if (k >= 0)
+        list.splice(k, 1);
+    }
+    if (board[row + 1][col + 1] === 0 && board[row][col + 1] === '2' && board[row + 1][col] === '2') {
+      let k = list.findIndex(key => key === (row + 1) * size + col + 1);
+      //console.log('x: ' + k + ' ' + ((row + 1) * size + col));
+      //console.log(list);
+      if (k >= 0)
+        list.splice(k, 1);
+    }
+    if (board[row + 1][col] === 0 && board[row + 1][col + 1] === '2' && board[row + 1][col - 1] === '2') {
+      let k = list.findIndex(key => key === (row + 1) * size + col);
+      //console.log('x: ' + k+ ' ' + ((row + 1) * size + col));
+      //console.log(list);
+      if (k >= 0)
+        list.splice(k, 1);
+    }
+    if (board[row][col - 1] === 0 && board[row + 1][col] === '2' && board[row - 1][col - 1] === '2') {
+      let k = list.findIndex(key => key === row * size + col - 1);
+      //console.log('x: ' + k + ' ' + (row * size + col - 1));
+      //console.log(list);
+      if (k >= 0)
+        list.splice(k, 1);
+    }
+    if (board[row - 1][col - 1] === 0 && board[row - 1][col] === '2' && board[row][col - 1] === '2') {
+      let k = list.findIndex(key => key === (row - 1) * size + col - 1);
+      //console.log('x: ' + k + ' ' + ((row - 1) * size + col - 1));
+      //console.log(list);
+      if (k >= 0)
+        list.splice(k, 1);
+    }
+  }
+  return list;
+}
+/**
+ * Return an array of the neighbors of the currentHex that belongs to the same player. The 
+ * array contains the id of the hex. id = row * size + col
+ * @param {Number} currentHex 
+ * @param {Number} player 
+ * @param {Matrix} board 
+ */
+function getNeighborhood(currentHex, player, board) {
+  let size = board.length;
+  let row = Math.floor(currentHex / size);
+  let col = currentHex % size;
+  let result = [];
+  let currentValue = board[row][col];
+
+  board[row][col] = 'x';
+  //Check if this value has been precalculated in this turn
+  //if (cache[currentHex]) {
+  //console.log("From cache")
+  //  return cache[currentHex];
+  //}
+
+  // Check the six neighbours of the current hex
+  pushIfAny(result, board, player, row - 1, col);
+  pushIfAny(result, board, player, row - 1, col + 1);
+  pushIfAny(result, board, player, row, col + 1);
+  pushIfAny(result, board, player, row, col - 1);
+  pushIfAny(result, board, player, row + 1, col);
+  pushIfAny(result, board, player, row + 1, col - 1);
+
+  // Add the edges if hex is at the border
+  if (col === size - 1) {
+    result.push(-1);
+  } else if (col === 0) {
+    result.push(-2);
+  }
+
+  board[row][col] = currentValue;
+
+  return result;
+}
+
+
+function pushIfAny(result, board, player, row, col) {
+  let size = board.length;
+  if (row >= 0 && row < size && col >= 0 && col < size) {
+    if (board[row][col] === player || board[row][col] === 0) {
+      if (board[row][col] === player) {
+        result.push(...getNeighborhood(col + row * size, player, board));
+      } else {
+        result.push(col + row * size);
+      }
+      
+    }
+  }
+}
+class HexAgent extends Agent {
+  constructor(value) {
+    super(value);
+    this.cache = {};
+  }
+
+  /**
+   * return a new move. The move is an array of two integers, representing the
+   * row and column number of the hex to play. If the given movement is not valid,
+   * the Hex controller will perform a random valid movement for the player
+   * Example: [1, 1]
+   */
+  send() {
+    let board = this.perception;
+    let size = board.length;
+    let available = getEmptyHex(board);
+    let nTurn = size * size - available.length;
+    return moveGame(board, size, available, nTurn)
+
+  }
+
+}
+
+module.exports = HexAgent;
+
+/**
+ * Return an array containing the id of the empty hex in the board
+ * id = row * size + col;
+ * @param {Matrix} board 
+ */
+function getEmptyHex(board) {
+  let result = [];
+  let size = board.length;
+  for (let k = 0; k < size; k++) {
+    for (let j = 0; j < size; j++) {
+      if (board[k][j] === 0) {
+        result.push(k * size + j);
+      }
+    }
+  }
+  return result;
+}
+
+
+
+class Arbol {
+  constructor(id, padre = null, hijos = [], tablero) {
+    this.id = id
+    this.padre = padre
+    this.hijos = hijos
+    this.tablero = tablero
+  }
+
+  addChild(id, tablero) {
+    const newChild = new Arbol(id)
+    newChild.padre = this
+    newChild.tablero = tablero
+    this.hijos.push(newChild)
+  }
+}
+
+function moveGame(board, size, available, nTurn) {
+  if (nTurn == 0) {
+    return [Math.floor(size / 2), Math.floor(size / 2) - 1];
+   // return [1, size - 1];
+  } else if (nTurn == 1) {
+    return [Math.floor(size / 2) - 1, Math.floor(size / 2) - 1];
+  }
+
+    
+  let profundidad = 7;
+  const arbol = new Arbol("root")
+
+  if (nTurn % 2 == 0) {
+    arbol.tablero = board
+    crearArbol(arbol, 1, profundidad)
+    let movimiento = minmax(arbol, profundidad, true, '1')
+    return [Math.floor(movimiento / board.length), movimiento % board.length];
+  } else {
+    arbol.tablero = transpose(board)
+    crearArbol(arbol, 2, profundidad)
+    let movimiento = minmax(arbol, profundidad, true, '2')    
+    return [movimiento % board.length, Math.floor(movimiento / board.length)];
+  }
+}
+
+function crearArbol(arbol, jugador, profundidad) {
+  let tableroHijo = JSON.parse(JSON.stringify(arbol.tablero));
+  let moValidos = boardPath(arbol.tablero);
+  if (profundidad == 0) {
+    for (let i = 1; i < moValidos.length - 1; i++) {
+      let row = Math.floor(moValidos[i] / arbol.tablero.length)
+      let col = moValidos[i] % arbol.tablero.length
+      tableroHijo[row][col] = '1'
+      arbol.addChild(moValidos[i], tableroHijo)
+      tableroHijo = JSON.parse(JSON.stringify(arbol.tablero))
+    }
+  } else {
+    if (moValidos.length > 2) {
+      if (moValidos.length == 3) {
+        let row = Math.floor(moValidos[1] / arbol.tablero.length)
+        let col = moValidos[1] % arbol.tablero.length
+        tableroHijo[row][col] = '1'
+        arbol.addChild(moValidos[1], tableroHijo)
+      } else {
+
+        crearHijos(moValidos, tableroHijo, arbol)
+
+        for (let i = 0; i < arbol.hijos.length; i++) {
+          const element = arbol.hijos[i];
+          crearArbol(element, jugador, profundidad - 1)
+        }
+      }
+    }
+  }
+}
+
+function crearHijos(hijos, tableroHijo, padre) {
+  hijos.shift()
+  hijos.pop()
+
+
+  while (hijos.length != 0) {
+    let row = Math.floor(hijos[0] / tableroHijo.length)
+    let col = hijos[0] % tableroHijo.length
+    tableroHijo[row][col] = '1'
+
+    padre.addChild(hijos[0], tableroHijo)
+    tableroHijo = JSON.parse(JSON.stringify(padre.tablero))
+    hijos.shift()
+  }
+}
+
+function minmax(arbol, profundidad, maxplayer, player, alfa = Number.MIN_SAFE_INTEGER, beta = Number.MAX_SAFE_INTEGER) {
+    
+
+  if (profundidad == 0 || arbol.hijos.length == 0) {
+    return boardScore(arbol.tablero, player) 
+    
+  }
+  
+  var bestHeur, valminmax
+
+  if (maxplayer) {
+    bestHeur = Number.NEGATIVE_INFINITY;
+    let movimiento = arbol.ida
+    for (const hijo in arbol.hijos) {
+      valminmax = minmax(arbol.hijos[hijo], profundidad - 1, false, player)
+      if (valminmax >= bestHeur) {
+        movimiento = arbol.hijos[hijo].id
+      }
+      if (valminmax > alfa) {
+        alfa = valminmax;
+      }
+      if (beta <= alfa) {
+        break;
+      }
+      else if(profundidad == 1){
+      }
+      bestHeur = Math.max(valminmax, bestHeur)
+    }
+
+    return movimiento
+  } else {
+    bestHeur = Number.POSITIVE_INFINITY;
+    let movimiento = arbol.id
+
+    for (const hijo in arbol.hijos) {
+      valminmax = minmax(arbol.hijos[hijo], profundidad - 1, true, player)
+      if (valminmax >= bestHeur) {
+        movimiento = arbol.hijos[hijo].id
+      }
+      if (beta > valminmax) {
+        beta = valminmax;
+      }
+      if (beta <= alfa) {
+        break;
+      }
+      bestHeur = Math.max(valminmax, bestHeur)
+    }
+    return movimiento
+  }
+}
+
+},{"ai-agents":190,"crypto":71,"node-dijkstra":191}],1:[function(require,module,exports){
 'use strict';
 
 const asn1 = exports;
@@ -9664,7 +10410,7 @@ function GHASH (key) {
 }
 
 // from http://bitwiseshiftleft.github.io/sjcl/doc/symbols/src/core_gcm.js.html
-// by Juho VÃ¤hÃ¤-Herttua
+// by Juho Vähä-Herttua
 GHASH.prototype.ghash = function (block) {
   var i = -1
   while (++i < block.length) {
@@ -16058,6 +16804,7 @@ function Cipher(options) {
 
   this.buffer = new Array(this.blockSize);
   this.bufferOff = 0;
+  this.padding = options.padding !== false
 }
 module.exports = Cipher;
 
@@ -16264,6 +17011,10 @@ DES.prototype._update = function _update(inp, inOff, out, outOff) {
 };
 
 DES.prototype._pad = function _pad(buffer, off) {
+  if (this.padding === false) {
+    return false;
+  }
+
   var value = buffer.length - off;
   for (var i = off; i < buffer.length; i++)
     buffer[i] = value;
@@ -16272,6 +17023,10 @@ DES.prototype._pad = function _pad(buffer, off) {
 };
 
 DES.prototype._unpad = function _unpad(buffer) {
+  if (this.padding === false) {
+    return buffer;
+  }
+
   var pad = buffer[buffer.length - 1];
   for (var i = buffer.length - pad; i < buffer.length; i++)
     assert.equal(buffer[i], pad);
@@ -20903,36 +21658,49 @@ utils.intFromLE = intFromLE;
 arguments[4][15][0].apply(exports,arguments)
 },{"buffer":19,"dup":15}],99:[function(require,module,exports){
 module.exports={
-  "name": "elliptic",
-  "version": "6.5.4",
-  "description": "EC cryptography",
-  "main": "lib/elliptic.js",
-  "files": [
-    "lib"
-  ],
-  "scripts": {
-    "lint": "eslint lib test",
-    "lint:fix": "npm run lint -- --fix",
-    "unit": "istanbul test _mocha --reporter=spec test/index.js",
-    "test": "npm run lint && npm run unit",
-    "version": "grunt dist && git add dist/"
+  "_from": "elliptic@^6.5.3",
+  "_id": "elliptic@6.5.4",
+  "_inBundle": false,
+  "_integrity": "sha512-iLhC6ULemrljPZb+QutR5TQGB+pdW6KGD5RSegS+8sorOZT+rdQFbsQFJgvN3eRqNALqJer4oQ16YvJHlU8hzQ==",
+  "_location": "/browserify/elliptic",
+  "_phantomChildren": {},
+  "_requested": {
+    "type": "range",
+    "registry": true,
+    "raw": "elliptic@^6.5.3",
+    "name": "elliptic",
+    "escapedName": "elliptic",
+    "rawSpec": "^6.5.3",
+    "saveSpec": null,
+    "fetchSpec": "^6.5.3"
   },
-  "repository": {
-    "type": "git",
-    "url": "git@github.com:indutny/elliptic"
-  },
-  "keywords": [
-    "EC",
-    "Elliptic",
-    "curve",
-    "Cryptography"
+  "_requiredBy": [
+    "/browserify/browserify-sign",
+    "/browserify/create-ecdh"
   ],
-  "author": "Fedor Indutny <fedor@indutny.com>",
-  "license": "MIT",
+  "_resolved": "https://registry.npmjs.org/elliptic/-/elliptic-6.5.4.tgz",
+  "_shasum": "da37cebd31e79a1367e941b592ed1fbebd58abbb",
+  "_spec": "elliptic@^6.5.3",
+  "_where": "C:\\Program Files\\nodejs\\node_modules\\browserify\\node_modules\\browserify-sign",
+  "author": {
+    "name": "Fedor Indutny",
+    "email": "fedor@indutny.com"
+  },
   "bugs": {
     "url": "https://github.com/indutny/elliptic/issues"
   },
-  "homepage": "https://github.com/indutny/elliptic",
+  "bundleDependencies": false,
+  "dependencies": {
+    "bn.js": "^4.11.9",
+    "brorand": "^1.1.0",
+    "hash.js": "^1.0.0",
+    "hmac-drbg": "^1.0.1",
+    "inherits": "^2.0.4",
+    "minimalistic-assert": "^1.0.1",
+    "minimalistic-crypto-utils": "^1.0.1"
+  },
+  "deprecated": false,
+  "description": "EC cryptography",
   "devDependencies": {
     "brfs": "^2.0.2",
     "coveralls": "^3.1.0",
@@ -20948,15 +21716,31 @@ module.exports={
     "istanbul": "^0.4.5",
     "mocha": "^8.0.1"
   },
-  "dependencies": {
-    "bn.js": "^4.11.9",
-    "brorand": "^1.1.0",
-    "hash.js": "^1.0.0",
-    "hmac-drbg": "^1.0.1",
-    "inherits": "^2.0.4",
-    "minimalistic-assert": "^1.0.1",
-    "minimalistic-crypto-utils": "^1.0.1"
-  }
+  "files": [
+    "lib"
+  ],
+  "homepage": "https://github.com/indutny/elliptic",
+  "keywords": [
+    "EC",
+    "Elliptic",
+    "curve",
+    "Cryptography"
+  ],
+  "license": "MIT",
+  "main": "lib/elliptic.js",
+  "name": "elliptic",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/indutny/elliptic.git"
+  },
+  "scripts": {
+    "lint": "eslint lib test",
+    "lint:fix": "npm run lint -- --fix",
+    "test": "npm run lint && npm run unit",
+    "unit": "istanbul test _mocha --reporter=spec test/index.js",
+    "version": "grunt dist && git add dist/"
+  },
+  "version": "6.5.4"
 }
 
 },{}],100:[function(require,module,exports){
@@ -27153,477 +27937,4 @@ function validateDeep(map) {
 
 module.exports = validateDeep;
 
-},{}],196:[function(require,module,exports){
-const Graph = require('node-dijkstra');
-const transpose = require('./transposeHex');
-const crypto = require('crypto');
-
-
-let cache = {};
-
-function boardScore(board, player) {
-  let path0 = boardPath(board);
-  let score = 0;
-  if (!path0) {
-    score = -999999999//(board.length * board.length);
-  } else {
-    if (path0.length === 2) {
-      score = 999999999//(board.length * board.length);
-    } else {
-      let path1 = boardPath(transpose(board));
-      if (!path1) {
-        score = 999999999//(board.length * board.length)
-      } else {
-        score = path1.length - path0.length;
-      }
-    }
-  }
-  return player === '1' ? score : -score;
-}
-
-function boardPath(board) {
-  let player = '1';
-  let size = board.length;
-
-  const route = new Graph();
-
-  let neighborsT = {};
-  let neighborsX = {};
-  cache = {};
-  // Build the graph out of the hex board
-  for (let i = 0; i < size; i++) {
-    for (let j = 0; j < size; j++) {
-      let key = i * size + j;
-      if (board[i][j] === 0 || board[i][j] === player) {
-        let list = getNeighborhood(key, player, board);
-        // Cache this result
-        //cache[key] = list;
-        list = removeIfAny(board, list, i, j);
-
-        //if (key === 5) console.log(list)
-
-        let neighbors = {};
-        let sideX = false;
-        let sideT = false;
-        list.forEach(x => {
-          switch (x) {
-            case -1:
-              neighbors[player + 'X'] = 1;
-              neighborsX[key + ''] = 1;
-              sideX = sideX || board[i][j] === player;
-              break;
-            case -2:
-              neighbors[player + 'T'] = 1;
-              neighborsT[key + ''] = 1;
-              sideT = sideT || board[i][j] === player;
-              break;
-            default:
-              neighbors[x + ''] = 1;
-          }
-        });
-        // This case occurs when the game has finished
-        if (sideT && sideX) {
-          neighborsX[player + 'T'] = 1;
-          neighborsT[player + 'X'] = 1;
-        }
-        route.addNode(key + '', neighbors);
-      }
-    }
-  }
-
-  route.addNode(player + 'T', neighborsT);
-  route.addNode(player + 'X', neighborsX);
-
-  //console.log(route)
-
-  return route.path(player + 'T', player + 'X');
-}
-
-/**
- * Evita que se consideren las casillas donde el enemigo tiene 2 opciones para cerrar el camino
- * @param {*} board 
- * @param {*} list 
- * @param {*} row 
- * @param {*} col 
- * @returns 
- */
-function removeIfAny(board, list, row, col) {
-  let size = board.length;
-  if (row > 0 && col > 0 && row < size - 1 && col < size - 1 && list.length > 0) {
-    if (board[row - 1][col] === 0 && board[row - 1][col - 1] === '2' && board[row][col + 1] === '2') {
-      let k = list.findIndex(key => key === (row - 1) * size + col);
-      //console.log('x: ' + k + ' ' + ((row - 1) *  size + col));
-      //console.log(list);
-      if (k >= 0)
-        list.splice(k, 1);
-    }
-    if (board[row][col + 1] === 0 && board[row - 1][col] === '2' && board[row + 1][col + 1] === '2') {
-      let k = list.findIndex(key => key === row * size + col + 1);
-      //console.log('x: ' + k + ' ' + (row *  size + col + 1) );
-      //console.log(list);
-      if (k >= 0)
-        list.splice(k, 1);
-    }
-    if (board[row + 1][col + 1] === 0 && board[row][col + 1] === '2' && board[row + 1][col] === '2') {
-      let k = list.findIndex(key => key === (row + 1) * size + col + 1);
-      //console.log('x: ' + k + ' ' + ((row + 1) * size + col));
-      //console.log(list);
-      if (k >= 0)
-        list.splice(k, 1);
-    }
-    if (board[row + 1][col] === 0 && board[row + 1][col + 1] === '2' && board[row + 1][col - 1] === '2') {
-      let k = list.findIndex(key => key === (row + 1) * size + col);
-      //console.log('x: ' + k+ ' ' + ((row + 1) * size + col));
-      //console.log(list);
-      if (k >= 0)
-        list.splice(k, 1);
-    }
-    if (board[row][col - 1] === 0 && board[row + 1][col] === '2' && board[row - 1][col - 1] === '2') {
-      let k = list.findIndex(key => key === row * size + col - 1);
-      //console.log('x: ' + k + ' ' + (row * size + col - 1));
-      //console.log(list);
-      if (k >= 0)
-        list.splice(k, 1);
-    }
-    if (board[row - 1][col - 1] === 0 && board[row - 1][col] === '2' && board[row][col - 1] === '2') {
-      let k = list.findIndex(key => key === (row - 1) * size + col - 1);
-      //console.log('x: ' + k + ' ' + ((row - 1) * size + col - 1));
-      //console.log(list);
-      if (k >= 0)
-        list.splice(k, 1);
-    }
-  }
-  return list;
-}
-/**
- * Return an array of the neighbors of the currentHex that belongs to the same player. The 
- * array contains the id of the hex. id = row * size + col
- * @param {Number} currentHex 
- * @param {Number} player 
- * @param {Matrix} board 
- */
-function getNeighborhood(currentHex, player, board) {
-  let size = board.length;
-  let row = Math.floor(currentHex / size);
-  let col = currentHex % size;
-  let result = [];
-  let currentValue = board[row][col];
-
-  board[row][col] = 'x';
-  //Check if this value has been precalculated in this turn
-  //if (cache[currentHex]) {
-  //console.log("From cache")
-  //  return cache[currentHex];
-  //}
-
-  // Check the six neighbours of the current hex
-  pushIfAny(result, board, player, row - 1, col);
-  pushIfAny(result, board, player, row - 1, col + 1);
-  pushIfAny(result, board, player, row, col + 1);
-  pushIfAny(result, board, player, row, col - 1);
-  pushIfAny(result, board, player, row + 1, col);
-  pushIfAny(result, board, player, row + 1, col - 1);
-
-  // Add the edges if hex is at the border
-  if (col === size - 1) {
-    result.push(-1);
-  } else if (col === 0) {
-    result.push(-2);
-  }
-
-  board[row][col] = currentValue;
-
-  return result;
-}
-
-function pushIfAny(result, board, player, row, col) {
-  let size = board.length;
-  if (row >= 0 && row < size && col >= 0 && col < size) {
-    if (board[row][col] === player || board[row][col] === 0) {
-      if (board[row][col] === player) {
-        result.push(...getNeighborhood(col + row * size, player, board));
-      } else {
-        result.push(col + row * size);
-      }
-    }
-  }
-}
-
-
-module.exports = boardScore;
-
-/*
-board = [[0, 0, 0],
-[0, '2', 0],
-['1', '1', '1']];
-console.log(boardPath(board));
-*/
-
-/*
-board = [[0, 0, 0],
-[0, '2', '1'],
-['1', '1', 0]];
-console.log(boardScore(board, '2'));  // Debe dar 3 - 1 = 2
-
-board = [[0, 0, '1'],
-[0, '2', 0],
-['1', 0, 0]];
-console.log(boardScore(board, '1'));  // Debe dar 2 - 2 = 0
-
-let board = [[0, '1', '1'],
-['2', '2', '2'],
-[0, 0, 0]];
-console.log(boardScore(board, '2'));
-
-board = [[0, '1', '1'],
-['2', '2', '2'],
-[0, 0, 0]];
-console.log(boardScore(board, '1'));
-
-let board = [[0, '2', '2'],
-['1', '1', '1'],
-[0, 0, 0]];
-console.log(boardScore(board, '1'));
-
-board = [[0, '2', '2'],
-['1', '1', '1'],
-[0, 0, 0]];
-console.log(boardScore(board, '2'));
-
-board = [[0, '2', '2'],
-['1', '1', '2'],
-['2', '2', 0]];
-console.log(boardScore(board, '2'));
-/*
-board = [[0, '2', '2'],
-['1', '1', '2'],
-[0, 0, '2']];
-console.log(boardScore(board, '2'));
-*/
-/*let board = [['1', '1', '2'],
-             [0,   '2', 0],
-             [0,    0,  0]];
-console.log(boardScore(board, '2'));
-
-    board = [['1', '1', 0],
-             [0,   '2', '2'],
-             [0,    0,  0]];
-console.log(boardScore(board, '2'));*/
-
-},{"./transposeHex":197,"crypto":71,"node-dijkstra":191}],197:[function(require,module,exports){
-/**
- * Transpose and convert the board game to a player 1 logic
- * @param {Array} board 
- */
-function transpose(board) {
-  let size = board.length;
-  let boardT = new Array(size);
-  for (let j = 0; j < size; j++) {
-      boardT[j] = new Array(size);
-      for (let i = 0; i < size; i++) {
-          boardT[j][i] = board[i][j];
-          if (boardT[j][i] === '1') {
-              boardT[j][i] = '2';
-          } else if (boardT[j][i] === '2') {
-              boardT[j][i] = '1';
-          }
-      }
-  }
-  return boardT;
-}
-
-module.exports = transpose;
-},{}],"/src/HexAgent.js":[function(require,module,exports){
-const Agent = require('ai-agents').Agent;
-const boardS = require('./boardScore');
-const transposeHex = require('./transposeHex');
-
-class HexAgent extends Agent {
-    constructor(value) {
-        super(value);
-        this.cache = {};
-    }
-
-    /**
-     * return a new move. The move is an array of two integers, representing the
-     * row and column number of the hex to play. If the given movement is not valid,
-     * the Hex controller will perform a random valid movement for the player
-     * Example: [1, 1]
-     */
-    send() {
-        let board = this.perception;
-        let size = board.length;
-        let available = getEmptyHex(board);
-        let nTurn = size * size - available.length;
-        return moveGame(board, size, available, nTurn)
-
-    }
-
-}
-
-module.exports = HexAgent;
-
-/**
- * Return an array containing the id of the empty hex in the board
- * id = row * size + col;
- * @param {Matrix} board 
- */
-function getEmptyHex(board) {
-    let result = [];
-    let size = board.length;
-    for (let k = 0; k < size; k++) {
-        for (let j = 0; j < size; j++) {
-            if (board[k][j] === 0) {
-                result.push(k * size + j);
-            }
-        }
-    }
-    return result;
-}
-
-
-
-class Arbol {
-    constructor(id, padre = null, hijos = [], tablero) {
-        this.id = id
-        this.padre = padre
-        this.hijos = hijos
-        this.tablero = tablero
-    }
-
-    addChild(id, tablero) {
-        const newChild = new Arbol(id)
-        newChild.padre = this
-        newChild.tablero = tablero
-        this.hijos.push(newChild)
-    }
-
-
-}
-
-
-
-function moveGame(board, size, available, nTurn) {
-    if (nTurn == 0) {
-        return [Math.floor(size / 2), Math.floor(size / 2) - 1];
-    } else if (nTurn == 1) {
-        return [Math.floor(size / 2), Math.floor(size / 2)];
-    }
-
-
-    let profundidad = 7;
-    const arbol = new Arbol("root")
-
-
-    if (nTurn % 2 == 0) {
-        arbol.tablero = board
-        crearArbol(arbol, 1, profundidad)
-        let movimiento = minmax(arbol, profundidad, true, '1')
-        return [Math.floor(movimiento / board.length), movimiento % board.length];
-    } else {
-        arbol.tablero = transposeHex(board)
-        crearArbol(arbol, 2, profundidad)
-        let movimiento = minmax(arbol, profundidad, true, '2')
-        return [movimiento % board.length, Math.floor(movimiento / board.length)];
-    }
-
-}
-
-function crearArbol(arbol, jugador, profundidad) {
-    let tableroHijo = JSON.parse(JSON.stringify(arbol.tablero))
-    let moValidos = boardS.boardPath(arbol.tablero);
-    if (profundidad == 0) {
-        for (let i = 1; i < moValidos.length - 1; i++) {
-            let row = Math.floor(moValidos[i] / arbol.tablero.length)
-            let col = moValidos[i] % arbol.tablero.length
-            tableroHijo[row][col] = '1'
-            arbol.addChild(moValidos[i], tableroHijo)
-            tableroHijo = JSON.parse(JSON.stringify(arbol.tablero))
-        }
-    } else {
-        if (moValidos.length > 2) {
-            if (moValidos.length == 3) {
-                let row = Math.floor(moValidos[1] / arbol.tablero.length)
-                let col = moValidos[1] % arbol.tablero.length
-                tableroHijo[row][col] = '1'
-                arbol.addChild(moValidos[1], tableroHijo)
-            } else {
-
-                crearHijos(moValidos, tableroHijo, arbol)
-
-                for (let i = 0; i < arbol.hijos.length; i++) {
-                    const element = arbol.hijos[i];
-                    crearArbol(element, jugador, profundidad - 1)
-                }
-            }
-
-
-        }
-    }
-}
-
-function crearHijos(hijos, tableroHijo, padre) {
-    hijos.shift()
-    hijos.pop()
-
-
-    while (hijos.length != 0) {
-        let row = Math.floor(hijos[0] / tableroHijo.length)
-        let col = hijos[0] % tableroHijo.length
-        tableroHijo[row][col] = '1'
-
-        padre.addChild(hijos[0], tableroHijo)
-        tableroHijo = JSON.parse(JSON.stringify(padre.tablero))
-        hijos.shift()
-    }
-}
-
-function minmax(arbol, profundidad, maxplayer, player, alfa = Number.MIN_SAFE_INTEGER, beta = Number.MAX_SAFE_INTEGER) {
-    if (profundidad == 0 || arbol.hijos.length == 0) {
-
-        return boardS.boardScore(arbol.tablero, player)
-    }
-
-    var bestHeur, valminmax
-
-    if (maxplayer) {
-        bestHeur = Number.NEGATIVE_INFINITY;
-        let movimiento = arbol.id
-        for (const hijo in arbol.hijos) {
-            valminmax = minmax(arbol.hijos[hijo], profundidad - 1, false, player)
-            if (valminmax >= bestHeur) {
-                movimiento = arbol.hijos[hijo].id
-            }
-            if (valminmax > alfa) {
-                alfa = valminmax;
-            }
-            if (beta <= alfa) {
-                break;
-            }
-            bestHeur = Math.max(valminmax, bestHeur)
-        }
-
-        return movimiento
-    } else {
-        bestHeur = Number.POSITIVE_INFINITY;
-        let movimiento = arbol.id
-
-        for (const hijo in arbol.hijos) {
-            valminmax = minmax(arbol.hijos[hijo], profundidad - 1, true, player)
-            if (valminmax >= bestHeur) {
-                movimiento = arbol.hijos[hijo].id
-            }
-            if (beta > valminmax) {
-                beta = valminmax;
-            }
-            if (beta <= alfa) {
-                break;
-            }
-            bestHeur = Math.max(valminmax, bestHeur)
-        }
-
-        return movimiento
-    }
-}
-
-},{"./boardScore":196,"./transposeHex":197,"ai-agents":190}]},{},[]);
+},{}]},{},[]);
